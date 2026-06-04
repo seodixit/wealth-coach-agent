@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Wealth Coach Agent — versión con razonamiento
+Wealth Coach Agent — versión inteligente (v3)
 =============================================
 
-Además de tools y memoria, este agente tiene un "cerebro" basado en REGLAS:
-evalúa tu situación y elige recomendaciones distintas según lo que detecte.
-
-En Agentic AI avanzado, un LLM haría estas decisiones en lenguaje natural.
-Aquí las simulamos con if/elif claros para que veas DÓNDE decide el agente.
+Mapa del código para aprender Agentic AI:
+  📁 MEMORIA      → wealth_data.txt + tools que leen/escriben
+  🔧 TOOLS       → funciones que calculan y transforman datos
+  🧠 RAZONAMIENTO → reglas que evalúan, clasifican y recomiendan
+  🖥️  ACCIONES     → menú que conecta al usuario con lo anterior
 """
 
 from __future__ import annotations
@@ -17,30 +17,46 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+# =============================================================================
+# 📁 MEMORIA DEL AGENTE
+# =============================================================================
+# La memoria es información que persiste entre ejecuciones del programa.
+# Sin memoria, el agente "olvida" al cerrar la terminal.
+#
+# En este proyecto la memoria externa es el archivo wealth_data.txt.
+# Las tools tool_guardar_datos / tool_leer_datos / tool_cargar_perfil
+# son el ÚNICO camino para escribir y leer esa memoria.
+
 WEALTH_DATA_FILE = Path(__file__).with_name("wealth_data.txt")
 
-# -----------------------------------------------------------------------------
-# UMBRALES DE DECISIÓN (el agente usa estas constantes para "pensar")
-# -----------------------------------------------------------------------------
-# Cambiar un umbral cambia el comportamiento del agente: son sus "criterios".
+# Etiquetas de clasificación (salida del razonamiento)
+CLAS_EXCELENTE = "Excelente"
+CLAS_BUEN_CAMINO = "BuenCamino"
+CLAS_NECESITA_MEJORA = "NecesitaMejora"
+CLAS_MUY_AMBIOSO = "ObjetivoMuyAmbicioso"
 
-MESES_PLAN_RAPIDO = 24       # ≤ 2 años  → plan muy favorable
-MESES_PLAN_SANO = 60         # ≤ 5 años  → plan realista
-MESES_PLAN_LARGO = 120       # ≤ 10 años → plan exigente
-# Más de 120 meses → consideramos el objetivo muy ambicioso con el ahorro actual
-
-RATIO_OBJETIVO_ALTO = 5      # objetivo > 5× patrimonio → salto grande
-RATIO_OBJETIVO_MUY_ALTO = 10 # objetivo > 10× patrimonio → muy ambicioso
-
-FRACCION_AHORRO_MINIMA = 0.70  # si ahorras < 70% del "ideal", no es suficiente
+# Criterios del razonamiento (umbrales que el agente usa para decidir)
+MESES_EXCELENTE = 24        # ≤ 2 años al ritmo actual
+MESES_BUEN_CAMINO = 60      # ≤ 5 años
+MESES_MUY_AMBIOSO = 120     # > 10 años → objetivo muy ambicioso
+RATIO_MUY_AMBIOSO = 10      # objetivo > 10× patrimonio
+FRACCION_AHORRO_OK = 0.70   # 70% del ahorro "ideal" = suficiente
+HORIZONTE_PLAN_ANOS = 5     # plan mensual de referencia
 
 
-# -----------------------------------------------------------------------------
-# UTILIDADES
-# -----------------------------------------------------------------------------
+# =============================================================================
+# 🔧 TOOLS — HERRAMIENTAS DEL AGENTE
+# =============================================================================
+# Una tool hace UNA tarea concreta. No decide sola: devuelve datos.
+# El razonamiento (más abajo) usa esos datos para clasificar y recomendar.
+#
+# Tools de memoria:  tool_guardar_datos, tool_leer_datos, tool_cargar_perfil
+# Tools de cálculo:  tool_calcular_tiempo, tool_evaluar_progreso, tool_generar_plan_mensual
+# Tool orquestadora: tool_analizar_perfil (llama a las demás y al razonamiento)
+
 
 def pedir_numero_positivo(mensaje: str) -> float:
-    """Pide un número válido al usuario (percepción del agente)."""
+    """Utilidad de entrada: percibe datos del usuario (no es memoria ni razonamiento)."""
     while True:
         texto = input(mensaje).strip().replace(",", ".")
         try:
@@ -53,12 +69,10 @@ def pedir_numero_positivo(mensaje: str) -> float:
             print("  ⚠️  Escribe un número válido (ejemplo: 15000 o 15000.50).")
 
 
-# -----------------------------------------------------------------------------
-# TOOLS (memoria y cálculos)
-# -----------------------------------------------------------------------------
+# --- Tools de MEMORIA ---
 
 def tool_guardar_datos(patrimonio: float, ahorro_mensual: float, objetivo: float) -> None:
-    """TOOL: persistir perfil en wealth_data.txt (memoria externa)."""
+    """TOOL (memoria): escribe el perfil en wealth_data.txt."""
     contenido = (
         "💰 Wealth Coach Agent — Datos guardados\n"
         "========================================\n"
@@ -70,65 +84,51 @@ def tool_guardar_datos(patrimonio: float, ahorro_mensual: float, objetivo: float
 
 
 def tool_leer_datos() -> str | None:
-    """TOOL: leer memoria como texto."""
+    """TOOL (memoria): lee wealth_data.txt como texto."""
     if not WEALTH_DATA_FILE.exists():
         return None
     return WEALTH_DATA_FILE.read_text(encoding="utf-8")
 
 
 def _extraer_numero_de_linea(linea: str) -> float:
-    valor = linea.split(":", 1)[1].strip()
-    valor = valor.replace("€", "").strip().replace(",", "")
+    valor = linea.split(":", 1)[1].strip().replace("€", "").strip().replace(",", "")
     return float(valor)
 
 
 def tool_cargar_perfil() -> dict[str, float] | None:
-    """TOOL: convertir memoria en números para otras tools y el razonamiento."""
+    """TOOL (memoria): convierte el archivo en números para el resto del agente."""
     texto = tool_leer_datos()
     if texto is None:
         return None
 
-    claves_linea = {
+    claves = {
         "Patrimonio actual": "patrimonio",
         "Ahorro mensual": "ahorro_mensual",
         "Objetivo patrimonio": "objetivo",
     }
     perfil: dict[str, float] = {}
-
     for linea in texto.splitlines():
-        for fragmento, nombre in claves_linea.items():
-            if fragmento in linea:
+        for frag, nombre in claves.items():
+            if frag in linea:
                 perfil[nombre] = _extraer_numero_de_linea(linea)
                 break
 
-    if len(perfil) != 3:
-        return None
-    return perfil
+    return perfil if len(perfil) == 3 else None
 
+
+# --- Tools de CÁLCULO ---
 
 def tool_calcular_tiempo_objetivo(
-    patrimonio: float,
-    ahorro_mensual: float,
-    objetivo: float,
+    patrimonio: float, ahorro_mensual: float, objetivo: float
 ) -> dict:
-    """TOOL: meses hasta el objetivo (ahorro lineal, sin intereses)."""
+    """TOOL: meses necesarios con el ahorro actual (sin intereses)."""
     faltante = objetivo - patrimonio
 
     if faltante <= 0:
-        return {
-            "ok": True,
-            "ya_alcanzado": True,
-            "meses": 0,
-            "faltante": 0.0,
-        }
+        return {"ok": True, "ya_alcanzado": True, "meses": 0, "faltante": 0.0}
 
     if ahorro_mensual == 0:
-        return {
-            "ok": False,
-            "ya_alcanzado": False,
-            "meses": None,
-            "faltante": faltante,
-        }
+        return {"ok": False, "ya_alcanzado": False, "meses": None, "faltante": faltante}
 
     meses = math.ceil(faltante / ahorro_mensual)
     return {
@@ -141,396 +141,350 @@ def tool_calcular_tiempo_objetivo(
     }
 
 
-# -----------------------------------------------------------------------------
-# NÚCLEO DE DECISIÓN (aquí el agente "piensa" con reglas)
-# -----------------------------------------------------------------------------
-# Cada función devuelve etiquetas y datos. Otra función usa eso para recomendar.
+def tool_evaluar_progreso(patrimonio: float, objetivo: float) -> dict:
+    """
+    TOOL: evalúa el patrimonio actual respecto al objetivo.
+
+    Devuelve cuánto falta, qué % del objetivo ya tienes y un mensaje legible.
+    """
+    if objetivo <= 0:
+        return {
+            "faltante": 0.0,
+            "porcentaje_logrado": 100.0,
+            "mensaje": "Objetivo no definido o es 0.",
+        }
+
+    if patrimonio >= objetivo:
+        return {
+            "faltante": 0.0,
+            "porcentaje_logrado": 100.0,
+            "mensaje": "¡Has alcanzado tu objetivo de patrimonio!",
+        }
+
+    faltante = objetivo - patrimonio
+    pct = min(100.0, (patrimonio / objetivo) * 100)
+
+    return {
+        "faltante": faltante,
+        "porcentaje_logrado": round(pct, 1),
+        "mensaje": (
+            f"Llevas el {pct:.1f}% del objetivo. "
+            f"Te faltan {faltante:,.0f} € para llegar a {objetivo:,.0f} €."
+        ),
+    }
 
 
-def _ahorro_ideal_mensual(faltante: float) -> float:
+def tool_generar_plan_mensual(faltante: float, anos: int = HORIZONTE_PLAN_ANOS) -> dict:
     """
-    Cuánto habría que ahorrar al mes para llegar en MESES_PLAN_SANO (5 años).
-    Sirve de referencia para decidir si el ahorro actual es suficiente.
+    TOOL: plan de ahorro mensual sencillo para un horizonte en años.
+
+    Ejemplo de salida: "Para alcanzar tu objetivo en 5 años deberías X €/mes"
     """
+    if faltante <= 0:
+        return {
+            "ahorro_mensual_necesario": 0.0,
+            "anos": anos,
+            "mensaje": "Ya no necesitas ahorrar más para este objetivo. 🎉",
+        }
+
+    meses = anos * 12
+    ahorro_mes = math.ceil(faltante / meses)
+
+    return {
+        "ahorro_mensual_necesario": ahorro_mes,
+        "anos": anos,
+        "meses": meses,
+        "mensaje": (
+            f"Para alcanzar tu objetivo en {anos} años "
+            f"deberías ahorrar {ahorro_mes:,.0f} € al mes."
+        ),
+    }
+
+
+# =============================================================================
+# 🧠 RAZONAMIENTO DEL AGENTE
+# =============================================================================
+# Aquí el agente "piensa": no guarda en disco ni pide input directamente.
+# Lee resultados de las tools y aplica REGLAS (if/elif) para:
+#   - clasificar tu situación
+#   - elegir recomendaciones distintas
+#
+# En un agente con LLM, este bloque sería el prompt + decisión del modelo.
+
+
+def _ahorro_ideal_mensual(faltante: float, meses: int = MESES_BUEN_CAMINO) -> float:
+    """Ahorro mensual de referencia para llegar en N meses."""
     if faltante <= 0:
         return 0.0
-    return faltante / MESES_PLAN_SANO
+    return faltante / meses
 
 
-def decidir_suficiencia_ahorro(ahorro_mensual: float, faltante: float) -> dict:
-    """
-    DECISIÓN 1: ¿El ahorro mensual es suficiente?
-
-    Compara tu ahorro real con el ahorro "ideal" (llegar en ~5 años).
-    """
+def razonar_suficiencia_ahorro(ahorro_mensual: float, faltante: float) -> dict:
+    """RAZONAMIENTO 1: ¿el ahorro actual es suficiente respecto al plan de 5 años?"""
     if faltante <= 0:
-        return {
-            "nivel": "no_aplica",
-            "etiqueta": "Objetivo ya alcanzado",
-            "ahorro_ideal": 0.0,
-            "es_suficiente": True,
-        }
-
-    if ahorro_mensual == 0:
-        return {
-            "nivel": "nulo",
-            "etiqueta": "Sin ahorro mensual",
-            "ahorro_ideal": _ahorro_ideal_mensual(faltante),
-            "es_suficiente": False,
-        }
+        return {"es_suficiente": True, "ratio": 1.0, "ahorro_ideal": 0.0}
 
     ideal = _ahorro_ideal_mensual(faltante)
-    ratio = ahorro_mensual / ideal if ideal > 0 else 1.0
+    if ahorro_mensual == 0:
+        return {"es_suficiente": False, "ratio": 0.0, "ahorro_ideal": ideal}
 
-    # DECISIÓN: clasificamos el ahorro según qué fracción del ideal representa.
-    if ratio >= 1.0:
-        nivel, etiqueta, suficiente = "holgado", "Ahorro suficiente (por encima del ritmo ideal)", True
-    elif ratio >= FRACCION_AHORRO_MINIMA:
-        nivel, etiqueta, suficiente = "ajustado", "Ahorro justo (llegarás, pero sin mucho margen)", True
-    elif ratio >= 0.40:
-        nivel, etiqueta, suficiente = "bajo", "Ahorro insuficiente para un plan cómodo", False
-    else:
-        nivel, etiqueta, suficiente = "muy_bajo", "Ahorro muy por debajo de lo necesario", False
-
+    ratio = ahorro_mensual / ideal
     return {
-        "nivel": nivel,
-        "etiqueta": etiqueta,
+        "es_suficiente": ratio >= FRACCION_AHORRO_OK,
+        "ratio": ratio,
         "ahorro_ideal": ideal,
-        "ratio_vs_ideal": ratio,
-        "es_suficiente": suficiente,
     }
 
 
-def decidir_ambicion_objetivo(
+def razonar_clasificacion(
+    progreso: dict,
+    tiempo: dict,
+    ahorro_info: dict,
     patrimonio: float,
     objetivo: float,
-    meses: int | None,
 ) -> dict:
     """
-    DECISIÓN 2: ¿El objetivo es demasiado ambicioso?
+    RAZONAMIENTO 2: clasificación global en 4 niveles.
 
-    Usa dos señales: cuánto multiplica tu patrimonio actual y cuántos meses tardarías.
+    Excelente          → ritmo rápido o objetivo cumplido
+    BuenCamino         → plan viable en ≤ 5 años con ahorro adecuado
+    NecesitaMejora     → se puede llegar, pero hay que subir el ahorro
+    ObjetivoMuyAmbicioso → plazo muy largo o salto de patrimonio enorme
     """
-    if objetivo <= patrimonio:
+    faltante = progreso["faltante"]
+    meses = tiempo.get("meses")
+    ratio_pat = objetivo / patrimonio if patrimonio > 0 else float("inf")
+    suficiente = ahorro_info["es_suficiente"]
+
+    # DECISIÓN: objetivo ya conseguido
+    if progreso["porcentaje_logrado"] >= 100:
         return {
-            "nivel": "alcanzado",
-            "etiqueta": "Objetivo ya alcanzado",
-            "es_ambicioso": False,
-            "ratio_objetivo_patrimonio": objetivo / patrimonio if patrimonio > 0 else 1.0,
+            "clasificacion": CLAS_EXCELENTE,
+            "descripcion": "Has alcanzado tu objetivo de patrimonio.",
         }
 
-    ratio = objetivo / patrimonio if patrimonio > 0 else float("inf")
-
-    # DECISIÓN: sin meses calculables (ahorro 0), el objetivo es inviable por ahorro.
-    if meses is None:
+    # DECISIÓN: sin ahorro o plazo > 10 años o objetivo >> patrimonio
+    if meses is None or meses > MESES_MUY_AMBIOSO or ratio_pat >= RATIO_MUY_AMBIOSO:
         return {
-            "nivel": "inviable",
-            "etiqueta": "Objetivo inalcanzable solo con ahorro actual (ahorro = 0)",
-            "es_ambicioso": True,
-            "ratio_objetivo_patrimonio": ratio,
+            "clasificacion": CLAS_MUY_AMBIOSO,
+            "descripcion": (
+                "El objetivo es muy ambicioso con tu patrimonio y ahorro actuales."
+            ),
         }
 
-    # DECISIÓN: combinamos plazo largo + salto grande de patrimonio.
-    if meses > MESES_PLAN_LARGO or ratio >= RATIO_OBJETIVO_MUY_ALTO:
-        nivel, etiqueta, ambicioso = (
-            "muy_ambicioso",
-            "Objetivo muy ambicioso para tu ritmo actual",
-            True,
-        )
-    elif meses > MESES_PLAN_SANO or ratio >= RATIO_OBJETIVO_ALTO:
-        nivel, etiqueta, ambicioso = (
-            "ambicioso",
-            "Objetivo exigente: posible, pero requerirá constancia",
-            True,
-        )
-    elif meses > MESES_PLAN_RAPIDO:
-        nivel, etiqueta, ambicioso = "moderado", "Objetivo razonable a medio plazo", False
-    else:
-        nivel, etiqueta, ambicioso = "alcanzable", "Objetivo alcanzable en poco tiempo", False
+    # DECISIÓN: llegarías en ≤ 2 años con ahorro suficiente
+    if meses <= MESES_EXCELENTE and suficiente:
+        return {
+            "clasificacion": CLAS_EXCELENTE,
+            "descripcion": f"Excelente ritmo: ~{meses} meses al ahorro actual.",
+        }
+
+    # DECISIÓN: plan sano (≤ 5 años) y ahorro OK
+    if meses <= MESES_BUEN_CAMINO and suficiente:
+        return {
+            "clasificacion": CLAS_BUEN_CAMINO,
+            "descripcion": f"Vas por buen camino: ~{meses} meses ({meses // 12} años).",
+        }
+
+    # DECISIÓN: ahorro bajo o plazo entre 5 y 10 años
+    if not suficiente or meses > MESES_BUEN_CAMINO:
+        return {
+            "clasificacion": CLAS_NECESITA_MEJORA,
+            "descripcion": (
+                "Puedes llegar, pero necesitas mejorar el ahorro mensual o el plazo."
+            ),
+        }
 
     return {
-        "nivel": nivel,
-        "etiqueta": etiqueta,
-        "es_ambicioso": ambicioso,
-        "ratio_objetivo_patrimonio": ratio,
-        "meses_estimados": meses,
+        "clasificacion": CLAS_BUEN_CAMINO,
+        "descripcion": "Situación estable; mantén la constancia.",
     }
 
 
-def decidir_situacion_global(
-    ya_alcanzado: bool,
-    ahorro: dict,
-    ambicion: dict,
-    meses: int | None,
-) -> str:
-    """
-    DECISIÓN 3: situación global (una etiqueta que resume todo).
-
-    Esta etiqueta elige qué bloque de recomendaciones mostrar después.
-    """
-    if ya_alcanzado:
-        return "objetivo_cumplido"
-
-    if ahorro["nivel"] == "nulo":
-        return "sin_ahorro"
-
-    if meses is None:
-        return "plan_inviable"
-
-    if ambicion["nivel"] == "muy_ambicioso" and not ahorro["es_suficiente"]:
-        return "crisis_plan"  # poco ahorro + objetivo lejano
-
-    if not ahorro["es_suficiente"]:
-        return "ahorro_insuficiente"
-
-    if ambicion["nivel"] in ("muy_ambicioso", "ambicioso"):
-        return "objetivo_ambicioso"
-
-    if meses <= MESES_PLAN_RAPIDO:
-        return "plan_excelente"
-
-    if meses <= MESES_PLAN_SANO:
-        return "plan_solido"
-
-    return "plan_largo"
-
-
-def generar_recomendaciones(
-    situacion: str,
+def razonar_recomendaciones(
+    clasificacion: str,
     perfil: dict[str, float],
-    ahorro: dict,
-    ambicion: dict,
+    progreso: dict,
     tiempo: dict,
+    ahorro_info: dict,
+    plan: dict,
 ) -> list[str]:
     """
-    DECISIÓN 4: recomendaciones distintas según la situación detectada.
+    RAZONAMIENTO 3: recomendaciones personalizadas según la clasificación.
 
-    Cada rama del if es un "plan de acción" diferente — como un agente
-    que elige distinta estrategia según el contexto.
+    Cada rama if es una estrategia distinta — polimorfismo de reglas.
     """
-    p = perfil["patrimonio"]
-    a = perfil["ahorro_mensual"]
-    o = perfil["objetivo"]
-    faltante = tiempo.get("faltante", max(0, o - p))
-    ideal = ahorro.get("ahorro_ideal", 0)
+    p, a, o = perfil["patrimonio"], perfil["ahorro_mensual"], perfil["objetivo"]
+    faltante = progreso["faltante"]
+    ideal = ahorro_info["ahorro_ideal"]
+    plan_mes = plan["ahorro_mensual_necesario"]
 
-    if situacion == "objetivo_cumplido":
+    if clasificacion == CLAS_EXCELENTE:
         return [
-            "🎉 ¡Enhorabuena! Ya has llegado a tu objetivo de patrimonio.",
-            "Define un nuevo objetivo (opción 1) o sube el listón poco a poco.",
-            "Considera diversificar: fondo de emergencia, inversiones, etc.",
+            "🌟 Clasificación: Excelente — tu plan es muy sólido.",
+            progreso["mensaje"],
+            "Automatiza el ahorro el día de cobro y revisa el plan cada 6 meses.",
+            "Cuando tengas fondo de emergencia, valora inversiones conservadoras.",
         ]
 
-    if situacion == "sin_ahorro":
+    if clasificacion == CLAS_BUEN_CAMINO:
+        meses = tiempo.get("meses", 0)
         return [
-            "⚠️ Sin ahorro mensual no avanzarás hacia el objetivo.",
-            f"Para llegar en ~5 años necesitarías ahorrar unos {ideal:,.0f} €/mes.",
-            "Empieza pequeño: revisa 3 gastos recurrentes y destina ese importe al ahorro.",
-            "Registra de nuevo tu perfil (opción 1) cuando subas el ahorro.",
+            "✅ Clasificación: Buen camino — vas en la dirección correcta.",
+            progreso["mensaje"],
+            f"Con {a:,.0f} €/mes llegarías en ~{meses} meses.",
+            plan["mensaje"],
+            "Mantén el hábito; un pequeño aumento del 5% acortaría el plazo.",
         ]
 
-    if situacion == "plan_inviable":
+    if clasificacion == CLAS_NECESITA_MEJORA:
+        meses = tiempo.get("meses", "?")
         return [
-            "🛑 Con los datos actuales el plan no es viable solo ahorrando.",
-            f"Te faltan {faltante:,.0f} €. Necesitas ahorro mensual > 0.",
-            f"Referencia: ~{ideal:,.0f} €/mes para un horizonte de 5 años.",
+            "📈 Clasificación: Necesita mejora — el plan es posible pero ajustado.",
+            progreso["mensaje"],
+            f"Tu ahorro actual: {a:,.0f} €/mes. Referencia ideal: {ideal:,.0f} €/mes.",
+            plan["mensaje"],
+            f"Al ritmo actual tardarías ~{meses} meses. Prioridad: subir ahorro un 15-20%.",
+            "Revisa 3 gastos fijos (suscripciones, seguros) antes de asumir más riesgo.",
         ]
 
-    if situacion == "crisis_plan":
-        return [
-            "🔴 Situación crítica: objetivo muy lejano y ahorro bajo.",
-            f"Sube el ahorro hacia al menos {ideal * FRACCION_AHORRO_MINIMA:,.0f} €/mes (70% del ritmo ideal).",
-            "O baja el objetivo a un hito intermedio (ej. la mitad) y celebra cada logro.",
-            "Revisa ingresos extra (freelance, venta ocasional) o recorta gastos fijos.",
-        ]
-
-    if situacion == "ahorro_insuficiente":
-        meses = tiempo["meses"]
-        return [
-            f"📉 Tu ahorro ({a:,.0f} €/mes) no es suficiente para un plan cómodo.",
-            f"Ideal orientativo: {ideal:,.0f} €/mes (llegarías en ~5 años).",
-            f"Al ritmo actual tardarías ~{meses} meses ({meses // 12} años).",
-            "Prioridad: sube el ahorro un 10-20% antes de buscar inversiones arriesgadas.",
-        ]
-
-    if situacion == "objetivo_ambicioso":
-        meses = tiempo["meses"]
-        return [
-            f"🎯 Objetivo exigente: {ambicion['etiqueta']}.",
-            f"Tiempo estimado: {meses} meses (~{meses // 12} años) con {a:,.0f} €/mes.",
-            "Divide el objetivo en 3 hitos (33%, 66%, 100%) y revisa cada trimestre.",
-            "Mantén un fondo de emergencia aparte para no romper el plan.",
-        ]
-
-    if situacion == "plan_excelente":
-        meses = tiempo["meses"]
-        return [
-            f"✅ ¡Buen ritmo! Llegarías en ~{meses} meses con tu ahorro actual.",
-            "Automatiza la transferencia el día de cobro para no depender de la fuerza de voluntad.",
-            "Cuando tengas 3-6 meses de gastos en emergencia, mira productos de bajo riesgo.",
-        ]
-
-    if situacion == "plan_solido":
-        meses = tiempo["meses"]
-        return [
-            f"👍 Plan sólido: unos {meses} meses ({meses // 12} años) al ritmo actual.",
-            "Tu ahorro mensual es adecuado para el objetivo marcado.",
-            "Revisa el progreso cada 6 meses (opción 3) y ajusta si cambia tu sueldo.",
-        ]
-
-    # plan_largo
-    meses = tiempo["meses"]
+    # ObjetivoMuyAmbicioso
     return [
-        f"⏳ Plan largo pero posible: ~{meses} meses ({meses // 12} años).",
-        "El objetivo no es imposible, pero exige disciplina a largo plazo.",
-        "Valora si puedes aumentar ingresos o reducir el objetivo un 15-20% para acortar plazo.",
+        "⚠️ Clasificación: Objetivo muy ambicioso para tu situación actual.",
+        progreso["mensaje"],
+        plan["mensaje"],
+        f"Te faltan {faltante:,.0f} €. Valora un hito intermedio (50% del objetivo).",
+        f"Para un plan cómodo en 5 años necesitas ~{plan_mes:,.0f} €/mes.",
+        "Divide el objetivo en 3 fases y celebra cada una.",
     ]
 
 
 def tool_analizar_perfil(perfil: dict[str, float]) -> dict:
     """
-    TOOL principal de razonamiento: encadena todas las decisiones.
+    TOOL orquestadora: une memoria (datos) + cálculos + razonamiento.
 
-    Flujo: calcular tiempo → evaluar ahorro → evaluar ambición → situación global → recomendaciones.
+    Flujo típico de un agente:
+      1) tools calculan hechos
+      2) razonamiento interpreta hechos
+      3) acción muestra resultado al usuario
     """
     patrimonio = perfil["patrimonio"]
-    ahorro_mensual = perfil["ahorro_mensual"]
+    ahorro = perfil["ahorro_mensual"]
     objetivo = perfil["objetivo"]
 
-    tiempo = tool_calcular_tiempo_objetivo(patrimonio, ahorro_mensual, objetivo)
-    faltante = tiempo.get("faltante", max(0, objetivo - patrimonio))
-
-    eval_ahorro = decidir_suficiencia_ahorro(ahorro_mensual, faltante)
-    eval_ambicion = decidir_ambicion_objetivo(
-        patrimonio,
-        objetivo,
-        tiempo.get("meses"),
-    )
-    situacion = decidir_situacion_global(
-        tiempo.get("ya_alcanzado", False),
-        eval_ahorro,
-        eval_ambicion,
-        tiempo.get("meses"),
-    )
-    recomendaciones = generar_recomendaciones(
-        situacion, perfil, eval_ahorro, eval_ambicion, tiempo
+    progreso = tool_evaluar_progreso(patrimonio, objetivo)
+    tiempo = tool_calcular_tiempo_objetivo(patrimonio, ahorro, objetivo)
+    plan = tool_generar_plan_mensual(progreso["faltante"], HORIZONTE_PLAN_ANOS)
+    ahorro_info = razonar_suficiencia_ahorro(ahorro, progreso["faltante"])
+    clasif = razonar_clasificacion(progreso, tiempo, ahorro_info, patrimonio, objetivo)
+    recomendaciones = razonar_recomendaciones(
+        clasif["clasificacion"],
+        perfil,
+        progreso,
+        tiempo,
+        ahorro_info,
+        plan,
     )
 
     return {
+        "progreso": progreso,
         "tiempo": tiempo,
-        "ahorro": eval_ahorro,
-        "ambicion": eval_ambicion,
-        "situacion": situacion,
+        "plan_mensual": plan,
+        "ahorro_info": ahorro_info,
+        "clasificacion": clasif,
         "recomendaciones": recomendaciones,
     }
 
 
-def mostrar_analisis(analisis: dict) -> None:
-    """Presenta al usuario el resultado del razonamiento del agente."""
+# =============================================================================
+# 🖥️ ACCIONES — interfaz con el usuario (menú)
+# =============================================================================
+# Las acciones no son memoria ni razonamiento puro: coordinan el flujo.
+# Patrón: leer memoria → analizar → mostrar.
+
+
+def mostrar_analisis_completo(analisis: dict) -> None:
+    """Muestra evaluación, clasificación, plan mensual y recomendaciones."""
+    prog = analisis["progreso"]
     tiempo = analisis["tiempo"]
-    ahorro = analisis["ahorro"]
-    ambicion = analisis["ambicion"]
+    plan = analisis["plan_mensual"]
+    clasif = analisis["clasificacion"]
 
-    print("\n" + "=" * 48)
-    print("  🧠 Análisis inteligente de tu plan")
-    print("=" * 48)
+    print("\n" + "=" * 50)
+    print("  🧠 Informe Wealth Coach Agent")
+    print("=" * 50)
 
-    if tiempo.get("ya_alcanzado"):
-        print("\n  Estado: objetivo ya alcanzado 🎉")
-    elif tiempo.get("ok"):
-        print(f"\n  Te faltan: {tiempo['faltante']:,.2f} €")
-        print(f"  Tiempo estimado: {tiempo['meses']} meses", end="")
-        if tiempo.get("anos", 0) > 0:
-            print(f" (~{tiempo['anos']} año(s) y {tiempo['meses_restantes']} mes(es))")
-        else:
-            print()
-    else:
-        print(f"\n  Te faltan: {tiempo['faltante']:,.2f} €")
-        print("  No se puede calcular plazo (ahorro mensual = 0).")
+    print("\n  📊 Evaluación patrimonio vs objetivo")
+    print(f"     {prog['mensaje']}")
 
-    print(f"\n  💶 Ahorro: {ahorro['etiqueta']}")
-    if ahorro.get("ahorro_ideal", 0) > 0:
-        print(f"     Referencia ideal (~5 años): {ahorro['ahorro_ideal']:,.0f} €/mes")
+    print(f"\n  🏷️  Clasificación: {clasif['clasificacion']}")
+    print(f"     {clasif['descripcion']}")
 
-    print(f"  🎯 Objetivo: {ambicion['etiqueta']}")
-    if ambicion.get("ratio_objetivo_patrimonio"):
-        print(f"     Tu objetivo es {ambicion['ratio_objetivo_patrimonio']:.1f}× tu patrimonio actual")
+    if not tiempo.get("ya_alcanzado") and tiempo.get("ok"):
+        print(f"\n  ⏱️  Con tu ahorro actual: {tiempo['meses']} meses "
+              f"({tiempo['anos']} años y {tiempo['meses_restantes']} meses)")
 
-    print(f"\n  📌 Situación detectada: {analisis['situacion'].replace('_', ' ')}")
-    print("\n  Recomendaciones personalizadas:")
+    print(f"\n  📅 Plan mensual de referencia ({plan['anos']} años)")
+    print(f"     {plan['mensaje']}")
+
+    print("\n  💡 Recomendaciones personalizadas:")
     for i, rec in enumerate(analisis["recomendaciones"], start=1):
-        print(f"    {i}. {rec}")
+        print(f"     {i}. {rec}")
     print()
 
 
-# -----------------------------------------------------------------------------
-# ACCIONES DEL AGENTE
-# -----------------------------------------------------------------------------
-
 def accion_registrar_perfil() -> None:
-    print("\n📋 Vamos a registrar tu perfil financiero.")
-    print("   (Responde con números en euros)\n")
-
+    print("\n📋 Registra tu perfil financiero.\n")
     patrimonio = pedir_numero_positivo("  Patrimonio actual (€): ")
     ahorro = pedir_numero_positivo("  Ahorro mensual (€): ")
     objetivo = pedir_numero_positivo("  Objetivo de patrimonio (€): ")
 
     tool_guardar_datos(patrimonio, ahorro, objetivo)
+    print("\n✅ Guardado en memoria (wealth_data.txt)")
 
-    print("\n✅ Datos guardados en 'wealth_data.txt'")
-
-    # Tras guardar, el agente razona automáticamente sobre el nuevo perfil.
-    perfil = {"patrimonio": patrimonio, "ahorro_mensual": ahorro, "objetivo": objetivo}
-    analisis = tool_analizar_perfil(perfil)
-    print("\n  Vista rápida tras registrar:")
-    print(f"  • {analisis['ahorro']['etiqueta']}")
-    print(f"  • {analisis['ambicion']['etiqueta']}")
-    print("  • Usa la opción 3 para el análisis completo con recomendaciones.")
+    analisis = tool_analizar_perfil(
+        {"patrimonio": patrimonio, "ahorro_mensual": ahorro, "objetivo": objetivo}
+    )
+    print(f"\n  Vista rápida: {analisis['clasificacion']['clasificacion']}")
+    print(f"  {analisis['plan_mensual']['mensaje']}")
+    print("  Opción 3 → informe completo.")
 
 
 def accion_ver_datos_guardados() -> None:
     datos = tool_leer_datos()
     if datos is None:
-        print("\n📭 Aún no hay datos guardados.")
-        print("   Usa la opción 1 del menú para registrar tu perfil.")
+        print("\n📭 Sin datos en memoria. Usa opción 1.")
         return
-    print("\n📂 Datos guardados:")
+    print("\n📂 Memoria (wealth_data.txt):")
     print("-" * 40)
     print(datos)
 
 
 def accion_analizar_plan() -> None:
-    """
-    Acción inteligente: memoria → tool_analizar_perfil → mostrar decisiones.
-    """
     perfil = tool_cargar_perfil()
     if perfil is None:
-        print("\n📭 No hay perfil guardado o el archivo está incompleto.")
-        print("   Usa la opción 1 para registrar patrimonio, ahorro y objetivo.")
+        print("\n📭 No hay perfil en memoria. Usa opción 1.")
         return
-
-    analisis = tool_analizar_perfil(perfil)
-    mostrar_analisis(analisis)
+    mostrar_analisis_completo(tool_analizar_perfil(perfil))
 
 
 def mostrar_menu() -> None:
     print("\n" + "=" * 44)
-    print("  💰 Wealth Coach Agent (con razonamiento)")
+    print("  💰 Wealth Coach Agent v3")
     print("=" * 44)
-    print("  1) Registrar / actualizar perfil financiero")
-    print("  2) Ver datos guardados")
-    print("  3) Analizar plan y recibir recomendaciones")
+    print("  1) Registrar / actualizar perfil")
+    print("  2) Ver memoria guardada")
+    print("  3) Análisis completo (clasificación + plan + consejos)")
     print("  4) Salir")
     print("-" * 44)
 
 
 def main() -> None:
-    print("🤖 Bienvenido a Wealth Coach Agent")
-    print("   Agente con reglas de decisión para aprender Agentic AI.\n")
+    print("🤖 Wealth Coach Agent — memoria + tools + razonamiento\n")
 
     while True:
         mostrar_menu()
-        opcion = input("Elige una opción (1-4): ").strip()
+        opcion = input("Elige (1-4): ").strip()
 
         if opcion == "1":
             accion_registrar_perfil()
@@ -539,10 +493,10 @@ def main() -> None:
         elif opcion == "3":
             accion_analizar_plan()
         elif opcion == "4":
-            print("\n👋 ¡Hasta luego! Sigue practicando con agentes.\n")
+            print("\n👋 ¡Hasta luego!\n")
             break
         else:
-            print("\n❌ Opción no válida. Escribe 1, 2, 3 o 4.")
+            print("\n❌ Opción no válida.")
 
 
 if __name__ == "__main__":
