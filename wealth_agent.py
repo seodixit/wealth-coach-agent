@@ -36,7 +36,7 @@ CLAS_NECESITA_MEJORA = "NecesitaMejora"
 CLAS_MUY_AMBIOSO = "ObjetivoMuyAmbicioso"
 
 # Criterios del razonamiento (umbrales que el agente usa para decidir)
-MESES_EXCELENTE = 24        # ≤ 2 años al ritmo actual
+MESES_EXCELENTE = 26        # ≤ 2 años al ritmo actual
 MESES_BUEN_CAMINO = 60      # ≤ 5 años
 MESES_MUY_AMBIOSO = 120     # > 10 años → objetivo muy ambicioso
 RATIO_MUY_AMBIOSO = 10      # objetivo > 10× patrimonio
