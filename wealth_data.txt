@@ -1,0 +1,5 @@
+💰 Wealth Coach Agent — Datos guardados
+========================================
+Patrimonio actual (€): 100,000.00
+Ahorro mensual (€):    20,000.00
+Objetivo patrimonio (€): 150,000.00
