@@ -2,7 +2,7 @@
 
 ## Current Status
 
-### V1 - Rule-Based Agent ✅
+### V2 - Modular Rule-Based Agent ✅
 
 Current implementation:
 
@@ -10,6 +10,7 @@ Current implementation:
 * Basic wealth tracking
 * Goal evaluation
 * Rule-based recommendations
+* Agentic architecture split into memory, tools, reasoning and main entrypoint
 * GitHub repository
 
 ---

@@ -1,71 +1,46 @@
-# wealth-coach-agent
-Wealth Coach Agent
+# Wealth Coach Agent
 
-Personal project to learn Agentic AI, Python, GitHub, MCP and AI agents.
+Proyecto personal para aprender Agentic AI, Python, GitHub, MCP y agentes de IA.
 
----> Objective
+## Objetivo
 
-Build an intelligent financial assistant capable of:
+Construir un asistente financiero capaz de:
 
-- Tracking wealth evolution
-- Monitoring savings and investments
-- Detecting financial risks
-- Generating recommendations
-- Helping achieve long-term financial goals
+- Leer y guardar memoria financiera del usuario.
+- Ejecutar tools con cálculos objetivos.
+- Razonar con reglas y generar recomendaciones.
+- Evolucionar hacia una arquitectura con LLM y MCP.
 
----> Current reference goals:
+## Arquitectura actual
 
-Reach €100,000 of net worth
-Build towards €150,000+
-Improve savings and investment decisions
-Current Version (V1)
+```text
+src/
+  main.py       -> punto de entrada y orquestación
+  memory.py     -> lectura/escritura de data/wealth_data.txt
+  tools.py      -> cálculos objetivos sin decisiones
+  reasoning.py  -> reglas, planificación y recomendaciones
 
-Rule-based agent written in Python.
+data/
+  wealth_data.txt
+```
 
-----> Current capabilities:
+## Cómo ejecutar
 
-Store wealth information
-Track savings progress
-Generate basic recommendations
-Evaluate progress against financial goals
-Future Vision
+Demo agentic actual:
 
----> ---> The project will evolve through several stages:
+```bash
+python src/main.py
+```
 
-V2 - Smarter Agent
-Historical tracking
-Monthly planning
-Better recommendations
----> --->---> --->---> --->---> --->---> --->---> --->---> --->---> --->
-V3 - AI Agent
-LLM-powered reasoning
-Natural language interaction
-Personalized financial advice
----> --->---> --->---> --->---> --->---> --->---> --->---> --->---> --->
-V4 - MCP Integration
-External tools
-Financial APIs
-Portfolio integrations
----> --->---> --->---> --->---> --->---> --->---> --->---> --->---> --->
-V5 - Autonomous Wealth Agent
-Goal monitoring
-Proactive recommendations
-Financial opportunity detection
-Technologies
-Python
-Git & GitHub
-Cursor
-Agentic AI concepts
-MCP (Model Context Protocol)
-Learning Goals
+Modo interactivo:
 
-This repository is part of a personal journey to become an AI Builder and learn:
+```bash
+python src/main.py --menu
+```
 
-Agentic AI
-LLM-based systems
-MCP architecture
-Tool integration
-AI-assisted software development
-Author
+## Principio de diseño
 
-seodixit
+- Memoria: persiste y recupera datos.
+- Tools: calculan hechos y devuelven JSON/dicts.
+- Razonamiento: interpreta resultados y decide recomendaciones.
+- Main: conecta las piezas y muestra la respuesta al usuario.
