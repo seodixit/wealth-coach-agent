@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from guardrails import validar_compra_grande, validar_liquidez_minima
 from memory import cargar_perfil, guardar_datos, leer_datos, leer_gastos_mes, leer_perfil
 from reasoning import analizar_perfil, planificar, razonar
 from tools import calcular_impacto_financiero
@@ -45,6 +46,32 @@ def ejecutar_plan(plan: list[str]) -> dict:
     return resultados
 
 
+def evaluar_guardrails(perfil: dict | None = None, impacto: dict | None = None) -> list[dict]:
+    """Valida reglas de seguridad antes de recomendar."""
+    alertas = []
+
+    # Guardrail de liquidez: comprueba fondo de emergencia si hay perfil.
+    if perfil is not None:
+        alertas.append(validar_liquidez_minima(perfil))
+
+    # Guardrail de compra: se ejecuta solo cuando hubo cálculo de impacto.
+    if impacto is not None:
+        alertas.append(validar_compra_grande(impacto))
+
+    return alertas
+
+
+def mostrar_alertas_guardrails(alertas: list[dict]) -> None:
+    """Muestra alertas antes de la recomendación final."""
+    if not alertas:
+        return
+
+    print("\n🛡️ Guardrails:")
+    for alerta in alertas:
+        estado = "OK" if alerta["ok"] else "ALERTA"
+        print(f"  {estado}: {alerta['mensaje']}")
+
+
 def agente(pregunta: str) -> None:
     """Demo agentic: planifica, ejecuta tools y razona una respuesta."""
     print("🧠 Pregunta:", pregunta)
@@ -55,11 +82,17 @@ def agente(pregunta: str) -> None:
     resultados = ejecutar_plan(plan)
     print("🛠️ Resultados tools:", resultados)
 
+    alertas = evaluar_guardrails(
+        perfil=resultados.get("perfil"),
+        impacto=resultados.get("impacto"),
+    )
+    mostrar_alertas_guardrails(alertas)
+
     respuesta = razonar(pregunta, resultados)
     print("✅ Respuesta:", respuesta)
 
 
-def mostrar_analisis_completo(analisis: dict) -> None:
+def mostrar_analisis_completo(analisis: dict, alertas: list[dict] | None = None) -> None:
     """Muestra evaluación, clasificación, plan mensual y recomendaciones."""
     prog = analisis["progreso"]
     tiempo = analisis["tiempo"]
@@ -85,6 +118,8 @@ def mostrar_analisis_completo(analisis: dict) -> None:
     print(f"\n  📅 Plan mensual de referencia ({plan['anos']} años)")
     print(f"     {plan['mensaje']}")
 
+    mostrar_alertas_guardrails(alertas or [])
+
     print("\n  💡 Recomendaciones personalizadas:")
     for i, rec in enumerate(analisis["recomendaciones"], start=1):
         print(f"     {i}. {rec}")
@@ -101,9 +136,11 @@ def accion_registrar_perfil() -> None:
     guardar_datos(patrimonio, ahorro, objetivo)
     print("\n✅ Guardado en memoria (data/wealth_data.txt)")
 
-    analisis = analizar_perfil(
-        {"patrimonio": patrimonio, "ahorro_mensual": ahorro, "objetivo": objetivo}
-    )
+    perfil = {"patrimonio": patrimonio, "ahorro_mensual": ahorro, "objetivo": objetivo}
+    alertas = evaluar_guardrails(perfil=perfil)
+    mostrar_alertas_guardrails(alertas)
+
+    analisis = analizar_perfil(perfil)
     print(f"\n  Vista rápida: {analisis['clasificacion']['clasificacion']}")
     print(f"  {analisis['plan_mensual']['mensaje']}")
     print("  Opción 3 → informe completo.")
@@ -128,7 +165,8 @@ def accion_analizar_plan() -> None:
         print("\n📭 No hay perfil en memoria. Usa opción 1.")
         return
 
-    mostrar_analisis_completo(analizar_perfil(perfil))
+    alertas = evaluar_guardrails(perfil=perfil)
+    mostrar_analisis_completo(analizar_perfil(perfil), alertas)
 
 
 def mostrar_menu() -> None:
